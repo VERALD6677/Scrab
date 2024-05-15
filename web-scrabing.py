@@ -1,107 +1,68 @@
 import json
-from pprint import pprint
 import requests
 from bs4 import BeautifulSoup
 import unicodedata
 
 url = 'https://spb.hh.ru/search/vacancy?text=python&area=1&area=2'
-headers = {'Accept': '*/*',
-           'User-Agent': 'Chrome'}
-symbol_list = []
-links_list = []
-links_sorted_list = []
-salary_list = []
-company_name_list = []
-location_list = []
-data_list = []
+headers = {'Accept': '*/*', 'User-Agent': 'Chrome'}
 
-
-def get_searching_links():
+def get_vacancies(url):
+    vacancies = []
     response = requests.get(url, headers=headers)
-    soup = BeautifulSoup(response.text, 'lxml')
-    vacancies = soup.find_all('a', class_='serp-item__title')
+    soup = BeautifulSoup(response.text, 'html.parser')
+    vacancy_elements = soup.find_all('div', class_='vacancy-serp-item')
+    
+    for vacancy_elem in vacancy_elements:
+        title_elem = vacancy_elem.find('a', class_='bloko-link')
+        if title_elem:
+            title = title_elem.text.strip()
+            link = title_elem['href']
+            salary_elem = vacancy_elem.find('div', class_='vacancy-serp-item__sidebar')
+            if salary_elem:
+                salary = unicodedata.normalize('NFKD', salary_elem.text.strip())
+            else:
+                salary = 'З/П не указана'
+            
+            company_elem = vacancy_elem.find('a', class_='bloko-link bloko-link_secondary')
+            if company_elem:
+                company_name = company_elem.text.strip()
+            else:
+                company_name = 'Название компании не указано'
+                
+            location_elem = vacancy_elem.find('span', class_='vacancy-serp-item__meta-info')
+            if location_elem:
+                location = location_elem.text.strip()
+            else:
+                location = 'Местоположение не указано'
+            
+            vacancies.append({
+                'title': title,
+                'link': link,
+                'salary': salary,
+                'company_name': company_name,
+                'location': location
+            })
+    return vacancies
+
+def filter_vacancies(vacancies):
+    filtered_vacancies = []
     for vacancy in vacancies:
-        links = vacancy['href']
-        links_list.append(links)
-        response_links = requests.get(links, headers=headers)
-        links_parsed = BeautifulSoup(response_links.text, 'lxml')
-        descriptions = links_parsed.find('div', {'data-qa': 'vacancy-description'})
-        if not descriptions:
-            continue
-        if ('Django' or 'django' or 'Flask' or 'flask') in descriptions.text:
-            symbol_list.append('+')
-        else:
-            symbol_list.append('-')
-    for i, c in zip(links_list, symbol_list):
-        if c == "+":
-            links_sorted_list.append(i)
-    return links_sorted_list
+        response = requests.get(vacancy['link'], headers=headers)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        description_elem = soup.find('div', class_='g-user-content')
+        if description_elem and any(keyword in description_elem.text for keyword in ['Django', 'django', 'Flask', 'flask']):
+            filtered_vacancies.append(vacancy)
+    return filtered_vacancies
 
+def save_to_json(data, filename):
+    with open(filename, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=4)
 
-def get_salary():
-    for link in links_sorted_list:
-        salary_link = requests.get(link, headers=headers)
-        salary_parsed = BeautifulSoup(salary_link.text, 'lxml')
-        salary = salary_parsed.find('span', class_="bloko-header-section-2 bloko-header-section-2_lite")
-        if not salary:
-            continue
-        salary_text = salary.text
-        salary_normalized = unicodedata.normalize('NFKD', salary_text)
-        salary_list.append(salary_normalized)
-    return salary_list
+def main():
+    vacancies = get_vacancies(url)
+    filtered_vacancies = filter_vacancies(vacancies)
+    save_to_json(filtered_vacancies, 'vacancies.json')
 
+if __name__ == "__main__":
+    main()
 
-def get_company_name():
-    for link in links_sorted_list:
-        company_name_link = requests.get(link, headers=headers)
-        company_name_parsed = BeautifulSoup(company_name_link.text, 'lxml')
-        company_name_ = company_name_parsed.find('a', class_="bloko-link bloko-link_kind-tertiary")
-        if not company_name_:
-            continue
-        company_name = company_name_['href']
-        company_name_href = f'https://spb.hh.ru{company_name}'
-        company_name_link_2 = requests.get(company_name_href, headers=headers)
-        company_name_parsed_2 = BeautifulSoup(company_name_link_2.text, 'lxml')
-        company_name_2 = company_name_parsed_2.find('span', class_="company-header-title-name")
-        if not company_name_2:
-            continue
-        company_name_2_text = company_name_2.text
-        company_name_normalized = unicodedata.normalize('NFKD', company_name_2_text)
-        company_name_list.append(company_name_normalized)
-    return company_name_list
-
-
-def get_location():
-    for link in links_sorted_list:
-        location_link = requests.get(link, headers=headers)
-        location_parsed = BeautifulSoup(location_link.text, 'lxml')
-        location = location_parsed.find('p', {'data-qa': 'vacancy-view-location'})
-        if not location:
-            location = location_parsed.find('span', {'data-qa': 'vacancy-view-raw-address'})
-            if not location:
-                continue
-        location_text = location.text
-        location_list.append(location_text)
-    return location_list
-
-
-def get_data(links_, salaries, companies_names, locations):
-    all_data = zip(links_, salaries, companies_names, locations)
-    for link, salary, company_name, location in all_data:
-        data_dict = {'link': link,
-                     'salary': salary,
-                     'company_name': company_name,
-                     'location': location}
-        data_list.append(data_dict)
-    return data_list
-
-
-get_searching_links()
-get_salary()
-get_company_name()
-get_location()
-get_data(links_sorted_list, salary_list, company_name_list, location_list)
-
-
-with open('data_file.json', 'w', encoding='utf-8') as data:
-    json.dump(data_list, data, indent=2, ensure_ascii=False)
